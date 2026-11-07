@@ -1,0 +1,28 @@
+{
+  "name": "karaoke",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "start": "node server.js",
+    "build:wasm": "cd dsp && cargo build --release --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/karaoke_dsp.wasm ../public/dsp.wasm",
+    "test:e2e": "node tests/e2e/run.mjs",
+    "bench": "node tests/bench-dsp.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "music-metadata": "^12.3.5",
+    "qrcode": "^1.5.4",
+    "selfsigned": "^5.5.0",
+    "ws": "^8.22.1"
+  },
+  "type": "module",
+  "devDependencies": {
+    "puppeteer-core": "^25.16.0"
+  }
+}

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b12">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Karaoke Mic</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎤</text></svg>">
+<style>
+  body { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+  h1 { font-size: 22px; margin: 4px 0; }
+  .mic { width: 160px; height: 160px; border-radius: 50%; margin: 6px auto; display: grid; place-items: center; font-size: 56px;
+    background: radial-gradient(circle, #ff4fa3 0%, #9b1a5a 70%); box-shadow: 0 0 0 calc(var(--lvl, 0) * 34px) #ff4fa333, 0 0 40px #ff4fa355;
+    border: 0; transition: box-shadow .05s linear; }
+  .mic.muted { background: radial-gradient(circle, #555 0%, #222 70%); box-shadow: none; }
+  .status { text-align: center; font-size: 13px; color: var(--dim); }
+  .lyr { text-align: center; font-size: 21px; min-height: 3.6em; }
+  .lyr .ln.cur { font-weight: 700; color: var(--accent); opacity: 1; }
+  .lyr .ln.next { opacity: .6; font-size: .85em; }
+  .np { display: flex; gap: 10px; align-items: center; }
+  .np img { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; background: #222; }
+  .transport { display: flex; gap: 8px; justify-content: center; }
+  .transport button { font-size: 20px; padding: 8px 18px; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg button { flex: 1; border: 0; border-radius: 0; background: none; }
+  .seg button.active { background: var(--panel2); color: var(--accent); }
+  details summary { cursor: pointer; color: var(--dim); font-size: 14px; }
+  .nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 8px 0; }
+  .nav .seg button { padding: 10px; }
+  .view { display: flex; flex-direction: column; gap: 14px; }
+  .tuner { text-align: center; }
+  .tn-note { font-size: 40px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .tn-bar { position: relative; height: 34px; margin: 6px 4px 2px; background: var(--panel2); border-radius: 9px; overflow: hidden; }
+  .tn-zone { position: absolute; left: 35%; width: 30%; top: 0; bottom: 0; background: #5be38f1f; }
+  .tn-mid { position: absolute; left: 50%; width: 2px; top: 0; bottom: 0; background: #5be38f88; }
+  .tn-needle { position: absolute; left: 50%; width: 6px; margin-left: -3px; top: 3px; bottom: 3px; border-radius: 4px; background: var(--good); transition: left .06s linear; opacity: .25; }
+  .tn-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); padding: 0 4px; }
+  .tn-info { margin-top: 6px; min-height: 1.4em; }
+  .drill-run { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .drill-msg { text-align: center; margin-bottom: 8px; min-height: 2.6em; }
+  .dots { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 10px; }
+  .dot-res { border: 2px solid; border-radius: 10px; padding: 4px 7px; text-align: center; font-size: 12px; min-width: 48px; }
+  .dot-res small { display: block; color: var(--dim); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 14px; }
+  .stats small { display: block; font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
+  .report .big { font-size: 32px; font-weight: 800; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="join" class="card">
+    <h1>🎤 Join the karaoke</h1>
+    <p class="dim small">Your phone becomes a microphone. Your voice plays through the speakers connected to the host screen.</p>
+    <input type="text" id="name" placeholder="Your name" maxlength="30" autocomplete="nickname">
+    <p></p>
+    <button class="primary" id="joinBtn" style="width:100%;padding:12px">Turn on my mic</button>
+    <p class="small" id="joinErr" style="color:var(--warn)"></p>
+    <p class="small dim">Tip: use headphones-free, hold the phone like a mic, and point it away from the speakers to avoid feedback.</p>
+  </div>
+
+  <div id="main" class="hidden" style="display:contents">
+    <div class="nav"><div class="seg" id="viewSeg"><button data-view="sing" class="active">🎤 Sing</button><button data-view="practice">🎯 Practice</button><button data-view="progress">📈 Progress</button></div></div>
+    <div class="view" id="view-sing">
+    <div id="lastReport"></div>
+    <div class="card">
+      <button class="mic" id="micBtn" title="Tap to mute">🎤</button>
+      <div class="status" id="status">Connecting…</div>
+      <div class="ctl" style="margin-top:10px"><div class="row"><label class="grow">My volume</label><output id="volOut">100%</output></div>
+        <input type="range" id="vol" min="0" max="3" step="0.01" value="1"></div>
+      <details><summary>Mic options</summary>
+        <div class="row" style="margin-top:8px"><label class="grow">Noise suppression</label><input type="checkbox" id="optNoise"></div>
+        <div class="row"><label class="grow">Echo cancellation</label><input type="checkbox" id="optEcho"></div>
+        <div class="row"><label class="grow">Auto gain</label><input type="checkbox" id="optAgc"></div>
+        <p class="small dim">Leave these off for the best singing sound. Turn on noise suppression if the room is loud.</p>
+      </details>
+    </div>
+
+    <div class="card">
+      <div class="np"><img id="npArt" alt=""><div class="grow"><div class="ellipsis" style="font-weight:700" id="npTitle">Nothing playing</div><div class="ellipsis dim small" id="npSub"></div></div></div>
+      <div class="lyr lyrics" id="lyr" style="margin:12px 0"></div>
+      <div class="transport"><button data-c="restart">⟲</button><button data-c="playpause">⏯</button><button data-c="skip">⏭</button><button data-c="loop" title="Loop this line">🔁</button>
+        <select id="phoneSpeed" style="width:auto" title="Speed"><option value="1">100%</option><option value="0.9">90%</option><option value="0.85">85%</option><option value="0.8">80%</option><option value="0.7">70%</option></select></div>
+    </div>
+
+    <div class="card"><div class="small dim" style="text-align:center">Tuner</div><div id="tuner"></div></div>
+
+    <div class="card">
+      <div class="seg" id="srcSeg"><button data-src="library" class="active">My music</button><button data-src="spotify">Spotify</button></div>
+      <p></p>
+      <input type="search" id="q" placeholder="Search for a song…">
+      <p class="small dim" id="searchMsg"></p>
+      <div class="list" id="results"></div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:8px">Queue</div>
+      <div class="list" id="queue"></div>
+    </div>
+    </div>
+    <div class="view hidden" id="view-practice"><div id="practice" class="view"></div></div>
+    <div class="view hidden" id="view-progress"><div id="progress" class="view"></div></div>
+  </div>
+</div>
+<script src="/mic.js" type="module"></script>
+</body>
+</html>

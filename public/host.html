@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Karaoke — Host</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎤</text></svg>">
+<style>
+  body { display: grid; grid-template-columns: 1fr 400px; height: 100vh; overflow: hidden; }
+  .stage { display: grid; grid-template-rows: auto 1fr auto auto; min-width: 0; padding: 18px 26px; gap: 12px;
+    background: radial-gradient(1200px 600px at 30% 0%, #2a1030 0%, transparent 60%), radial-gradient(900px 500px at 90% 100%, #0e2a3a 0%, transparent 60%); }
+  .now { display: flex; gap: 16px; align-items: center; min-height: 80px; }
+  .now img { width: 80px; height: 80px; border-radius: 10px; object-fit: cover; background: #222; }
+  .now .title { font-size: 24px; font-weight: 800; }
+  .now .singer { color: var(--accent); font-weight: 700; }
+  .join { margin-left: auto; text-align: center; font-size: 12px; color: var(--dim); }
+  .join img { width: 96px; height: 96px; border-radius: 8px; background: #fff; padding: 4px; display: block; margin: 0 auto 4px; }
+  #lyrics { font-size: clamp(22px, 3.6vw, 52px); line-height: 1.25; padding: 0 4vw; min-height: 0; overflow: hidden; }
+  #lyrics .ln.prev { font-size: .7em; }
+  #lyrics .ln.next2 { font-size: .8em; opacity: .4; }
+  #lyrics .plain { font-size: .55em; white-space: pre-wrap; opacity: .85; overflow: auto; text-align: center; max-height: 100%; }
+  #pitchWrap { position: relative; height: 130px; background: #0008; border: 1px solid var(--line); border-radius: var(--radius); }
+  #pitch { width: 100%; height: 100%; display: block; }
+  #scores { position: absolute; top: 6px; right: 10px; display: flex; gap: 14px; font-size: 13px; }
+  #pitchHint { position: absolute; left: 12px; top: 8px; font-size: 12px; color: var(--dim); }
+  .transport { display: flex; gap: 10px; align-items: center; }
+  .transport .bar { flex: 1; height: 6px; background: var(--panel2); border-radius: 99px; position: relative; cursor: pointer; }
+  .transport .bar > div { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 99px; width: 0; }
+  .side { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tabs button { flex: 1; border: 0; border-radius: 0; background: none; padding: 12px 4px; color: var(--dim); }
+  .tabs button.active { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+  .pane { padding: 14px; overflow: auto; flex: 1; display: none; }
+  .pane.active { display: block; }
+  .pane h3 { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
+  .pane h3:first-child { margin-top: 0; }
+  .ctl { margin: 10px 0; }
+  .ctl .row label { flex: 1; }
+  .ctl output { font-variant-numeric: tabular-nums; color: var(--text); font-size: 13px; }
+  .singerRow { display: flex; gap: 8px; align-items: center; padding: 6px 0; }
+  .singerRow .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .singerRow .vu { width: 50px; height: 6px; background: var(--panel2); border-radius: 9px; overflow: hidden; flex: none; }
+  .singerRow .vu > div { height: 100%; background: var(--good); width: 0; }
+  #overlay { position: fixed; inset: 0; background: #000c; backdrop-filter: blur(6px); display: grid; place-items: center; z-index: 50; }
+  #overlay .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 30px; max-width: 520px; text-align: center; }
+  #overlay h1 { margin: 0 0 6px; font-size: 34px; }
+  #upNext { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-size: 28px; background: #000a; border-radius: var(--radius); }
+  .lyricsBox { position: relative; min-height: 0; display: grid; }
+  .modeInfo { font-size: 12px; }
+  #upNext { overflow: auto; padding: 12px; }
+  .interstitial { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 1100px; align-items: stretch; font-size: 15px; text-align: left; }
+  .reports { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .rep { background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: var(--radius); padding: 14px; }
+  .rep-h { display: flex; justify-content: space-between; align-items: baseline; font-size: 20px; }
+  .rep-h b { color: var(--c); }
+  .rep-score { font-size: 34px; font-weight: 800; text-align: right; line-height: 1; }
+  .rep-score small, .rep small { display: block; font-size: 11px; color: var(--dim); font-weight: 400; text-transform: uppercase; letter-spacing: .06em; }
+  .rep-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; font-size: 14px; }
+  .rep-lines { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; font-size: 14px; }
+  .rep-tips { margin: 6px 0 0; padding-left: 18px; color: var(--dim); font-size: 13.5px; }
+  .upnext { text-align: center; }
+  @media (max-width: 900px) { body { grid-template-columns: 1fr; grid-template-rows: 1fr 45vh; } .side { border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div id="overlay">
+  <div class="card">
+    <h1>🎤 Karaoke</h1>
+    <p class="dim">This screen plays the music and mixes in everyone's phone mics. Keep it on the computer that's connected to your speakers.</p>
+    <p id="hostWarn" class="small hidden" style="color:var(--warn)"></p>
+    <button class="primary" id="startBtn" style="font-size:18px;padding:12px 26px">Start the party</button>
+    <p class="small dim">Browsers only allow audio after a click, so this button is needed.</p>
+  </div>
+</div>
+
+<main class="stage">
+  <div class="now">
+    <img id="npArt" alt="">
+    <div class="grow">
+      <div class="title ellipsis" id="npTitle">Nothing playing</div>
+      <div class="dim ellipsis" id="npArtist">Add songs from the right, or from a phone</div>
+      <div class="row small" style="margin-top:4px"><span class="singer" id="npSinger"></span><span id="npMode" class="modeInfo"></span></div>
+    </div>
+    <div class="join"><img id="qr" alt="Join QR"><div>Scan to join with your phone mic</div><div id="joinUrl" class="small"></div></div>
+  </div>
+
+  <div class="lyricsBox">
+    <div id="lyrics" class="lyrics"></div>
+    <div id="upNext" class="hidden"></div>
+  </div>
+
+  <div id="pitchWrap">
+    <canvas id="pitch"></canvas>
+    <div id="pitchHint"></div>
+    <div id="scores"></div>
+  </div>
+
+  <div class="transport">
+    <button id="btnPlay" title="Play/Pause">▶︎</button>
+    <button id="btnRestart" title="Restart">⟲</button>
+    <button id="btnSkip" title="Next song">⏭</button>
+    <button id="btnLoop" title="Loop the current lyric line">🔁 Loop line</button>
+    <select id="speed" title="Playback speed (local files)" style="width:auto"><option value="1">100%</option><option value="0.9">90%</option><option value="0.85">85%</option><option value="0.8">80%</option><option value="0.7">70%</option></select>
+    <span id="tCur" class="small dim">0:00</span>
+    <div class="bar" id="seek"><div id="seekFill"></div></div>
+    <span id="tDur" class="small dim">0:00</span>
+    <span class="small dim" title="Shift lyrics timing">Lyrics</span>
+    <button class="sm" id="offMinus">−0.25s</button><span id="offVal" class="small">0.00</span><button class="sm" id="offPlus">+0.25s</button>
+  </div>
+</main>
+
+<aside class="side">
+  <nav class="tabs">
+    <button data-tab="queue" class="active">Queue</button>
+    <button data-tab="library">Library</button>
+    <button data-tab="spotify">Spotify</button>
+    <button data-tab="mixer">Mixer</button>
+    <button data-tab="setup">Setup</button>
+  </nav>
+
+  <section class="pane active" id="pane-queue">
+    <div class="row"><h3 class="grow" style="margin:0">Up next</h3><button class="primary sm" id="btnStartQueue">Play next</button></div>
+    <div class="list" id="queue" style="margin-top:10px"></div>
+    <h3>Singers connected</h3>
+    <div id="singers"></div>
+  </section>
+
+  <section class="pane" id="pane-library">
+    <div class="row"><input type="search" id="libSearch" placeholder="Search your music…"><button id="btnUpload" title="Add audio files">＋ Add</button><button id="btnRescan" title="Rescan music folder">⟳</button></div>
+    <input type="file" id="fileInput" accept="audio/*,.mp3,.m4a,.flac,.wav,.ogg,.opus" multiple class="hidden">
+    <div class="row small" style="margin:8px 0"><label for="singerPick">Singer:</label><select id="singerPick" class="grow"></select></div>
+    <p class="small dim" id="libHint"></p>
+    <div class="list" id="libList"></div>
+  </section>
+
+  <section class="pane" id="pane-spotify">
+    <div id="spLoggedOut">
+      <p>Log in to Spotify (Premium required) to sing along to anything in its catalog.</p>
+      <button class="primary" id="spLogin">Log in with Spotify</button>
+      <p class="small dim" id="spNotConfigured">First add your Spotify Client ID in <b>Setup</b>.</p>
+    </div>
+    <div id="spLoggedIn" class="hidden">
+      <input type="search" id="spSearch" placeholder="Search Spotify…">
+      <div class="row small" style="margin:8px 0"><label for="singerPick2">Singer:</label><select id="singerPick2" class="grow"></select></div>
+      <p class="small dim">“Karaoke” plays a karaoke/instrumental release of the song from Spotify's catalog. Spotify audio is DRM-protected, so vocals can't be stripped from the original recording itself.</p>
+      <div class="list" id="spList"></div>
+      <p class="small dim" id="spStatus"></p>
+    </div>
+  </section>
+
+  <section class="pane" id="pane-mixer">
+    <h3>Music</h3>
+    <div class="ctl"><div class="row"><label>Music volume</label><output id="o-musicVol"></output></div><input type="range" id="musicVol" min="0" max="1.5" step="0.01" value="0.8"></div>
+    <div class="ctl"><div class="row"><label>Guide vocal (AI stems only)</label><output id="o-guideVol"></output></div><input type="range" id="guideVol" min="0" max="1" step="0.01" value="0"></div>
+    <div class="ctl"><div class="row"><label>Key change (semitones)</label><output id="o-semitones"></output></div><input type="range" id="semitones" min="-6" max="6" step="1" value="0"></div>
+    <div class="ctl"><div class="row"><label>Spectral vocal removal strength</label><output id="o-cut"></output></div><input type="range" id="cut" min="0" max="1" step="0.01" value="1"></div>
+    <div class="ctl"><div class="row"><label>Removal strictness (higher keeps more instruments)</label><output id="o-width"></output></div><input type="range" id="width" min="0" max="1" step="0.01" value="0.55"></div>
+    <p class="small dim">Key change and spectral removal run in a Rust/WebAssembly engine, for local files only.</p>
+    <h3>Microphones</h3>
+    <div class="ctl"><div class="row"><label>Mic master volume</label><output id="o-micVol"></output></div><input type="range" id="micVol" min="0" max="3" step="0.01" value="1.4"></div>
+    <div class="ctl"><div class="row"><label>Reverb</label><output id="o-reverb"></output></div><input type="range" id="reverb" min="0" max="1" step="0.01" value="0.3"></div>
+    <div class="ctl"><div class="row"><label>Echo</label><output id="o-echo"></output></div><input type="range" id="echo" min="0" max="0.8" step="0.01" value="0.12"></div>
+    <h3>Pitch correction (auto-tune)</h3>
+    <div class="ctl"><div class="row"><label>Amount</label><output id="o-tune"></output></div><input type="range" id="tune" min="0" max="1" step="0.01" value="0"></div>
+    <div class="ctl"><div class="row"><label>Speed (high = robotic)</label><output id="o-tuneSpeed"></output></div><input type="range" id="tuneSpeed" min="0" max="1" step="0.01" value="0.5"></div>
+    <div class="ctl"><div class="row"><label>Scale</label></div>
+      <select id="tuneKey"><option value="-1">Chromatic (any note)</option></select></div>
+  </section>
+
+  <section class="pane" id="pane-setup">
+    <h3>Phones</h3>
+    <p class="small">On each phone (same Wi-Fi), open:</p>
+    <div id="micUrls" class="small"></div>
+    <p class="small dim">The phone will warn that the certificate isn't trusted. That's expected for a home server: tap <b>Advanced → Proceed</b> (Android) or <b>Show Details → visit this website</b> (iPhone). HTTPS is required for browsers to allow the mic.</p>
+    <h3>Spotify</h3>
+    <ol class="small" style="padding-left:18px">
+      <li>Go to <a href="https://developer.spotify.com/dashboard" target="_blank">developer.spotify.com/dashboard</a> → Create app.</li>
+      <li>Redirect URI: <code id="redirUri"></code></li>
+      <li>Tick <b>Web API</b> and <b>Web Playback SDK</b>, save, and copy the Client ID here.</li>
+      <li>In the app's <b>User Management</b>, add the email of each Spotify account that will log in (up to 5).</li>
+    </ol>
+    <div class="row"><input type="text" id="spClientId" placeholder="Spotify Client ID"><button id="spSave">Save</button></div>
+    <p class="small dim" id="spSetupMsg"></p>
+    <button id="spLogout" class="hidden">Log out of Spotify</button>
+    <h3>AI vocal removal (Demucs)</h3>
+    <p class="small" id="demucsInfo"></p>
+    <h3>Music folder</h3>
+    <p class="small dim">Drop audio files into the <code>music/</code> folder next to the server (or use ＋ Add in Library). “Artist - Title.mp3” filenames help find lyrics.</p>
+  </section>
+</aside>
+
+<script src="/host.js" type="module"></script>
+</body>
+</html>
