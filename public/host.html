@@ -47,6 +47,12 @@
   #overlay h1 { margin: 0 0 6px; font-size: 34px; }
   #upNext { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-size: 28px; background: #000a; border-radius: var(--radius); }
   .lyricsBox { position: relative; min-height: 0; display: grid; }
+  #ytBox { position: absolute; inset: 0; background: #000; border-radius: var(--radius); overflow: hidden; }
+  #ytBox iframe, #ytBox > div { width: 100%; height: 100%; border: 0; display: block; }
+  .lyricsBox.video #lyrics { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; font-size: clamp(18px, 2.4vw, 34px); padding: 40px 4vw 14px;
+    background: linear-gradient(transparent, #000d 45%); pointer-events: none; justify-content: flex-end; }
+  .lyricsBox.video #lyrics .ln.prev, .lyricsBox.video #lyrics .ln.next2 { display: none; }
+  .lyricsBox.video.nolyrics #lyrics { display: none; }
   .modeInfo { font-size: 12px; }
   #upNext { overflow: auto; padding: 12px; }
   .interstitial { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 1100px; align-items: stretch; font-size: 15px; text-align: left; }
@@ -76,7 +82,7 @@
 
 <main class="stage">
   <div class="now">
-    <img id="npArt" alt="">
+    <img id="npArt" alt="" onerror="this.onerror=null;this.src='/api/art/none'">
     <div class="grow">
       <div class="title ellipsis" id="npTitle">Nothing playing</div>
       <div class="dim ellipsis" id="npArtist">Add songs from the right, or from a phone</div>
@@ -86,6 +92,7 @@
   </div>
 
   <div class="lyricsBox">
+    <div id="ytBox" class="hidden"><div id="ytPlayer"></div></div>
     <div id="lyrics" class="lyrics"></div>
     <div id="upNext" class="hidden"></div>
   </div>
@@ -115,6 +122,7 @@
     <button data-tab="queue" class="active">Queue</button>
     <button data-tab="library">Library</button>
     <button data-tab="spotify">Spotify</button>
+    <button data-tab="youtube">YouTube</button>
     <button data-tab="mixer">Mixer</button>
     <button data-tab="setup">Setup</button>
   </nav>
@@ -147,6 +155,15 @@
       <div class="list" id="spList"></div>
       <p class="small dim" id="spStatus"></p>
     </div>
+  </section>
+
+  <section class="pane" id="pane-youtube">
+    <form class="row" id="ytForm"><input type="search" id="ytSearch" placeholder="Search YouTube or paste a link…" enterkeyhint="search"><button class="primary" type="submit">Search</button></form>
+    <div class="row small" style="margin:8px 0"><label class="row" style="gap:6px"><input type="checkbox" id="ytKaraoke" checked> Karaoke versions only</label></div>
+    <div class="row small" style="margin:8px 0"><label for="singerPick3">Singer:</label><select id="singerPick3" class="grow"></select></div>
+    <p class="small dim" id="ytHint"></p>
+    <div class="list" id="ytList"></div>
+    <p class="small dim">YouTube videos play in YouTube's own player with their original audio. Vocal removal, key change and scoring aren't available, so search for karaoke versions.</p>
   </section>
 
   <section class="pane" id="pane-mixer">
@@ -183,6 +200,15 @@
     <div class="row"><input type="text" id="spClientId" placeholder="Spotify Client ID"><button id="spSave">Save</button></div>
     <p class="small dim" id="spSetupMsg"></p>
     <button id="spLogout" class="hidden">Log out of Spotify</button>
+    <h3>YouTube</h3>
+    <p class="small">Pasting YouTube links works without setup. To <b>search</b> YouTube, add a free YouTube Data API key:</p>
+    <ol class="small" style="padding-left:18px">
+      <li>Open <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank">Google Cloud Console → YouTube Data API v3</a>, create or choose a project, and click <b>Enable</b>.</li>
+      <li>Go to <b>APIs &amp; Services → Credentials → Create credentials → API key</b>. Restrict it to the YouTube Data API v3.</li>
+      <li>Paste it here.</li>
+    </ol>
+    <div class="row"><input type="text" id="ytKey" placeholder="YouTube API key" autocomplete="off"><button id="ytSave">Save</button></div>
+    <p class="small dim" id="ytSetupMsg"></p>
     <h3>AI vocal removal (Demucs)</h3>
     <p class="small" id="demucsInfo"></p>
     <h3>Music folder</h3>

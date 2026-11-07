@@ -1,4 +1,5 @@
 // Phone page: captures the mic and streams it to the host screen over WebRTC.
+import { looksLikeYouTubeLink } from '/youtube.js';
 import { startEngine, mountTuner, onRef, initPractice, onReport, reportCard, renderProgress, progress } from '/practice.js';
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -215,23 +216,43 @@ $('#queue').addEventListener('click', (e) => {
 document.querySelectorAll('#srcSeg button').forEach((b) => b.addEventListener('click', () => {
   src = b.dataset.src;
   document.querySelectorAll('#srcSeg button').forEach((x) => x.classList.toggle('active', x === b));
+  $('#qGo').classList.toggle('hidden', src !== 'youtube');
+  $('#ytOpts').classList.toggle('hidden', src !== 'youtube');
+  $('#q').placeholder = src === 'youtube' ? 'Search YouTube or paste a link…' : 'Search for a song…';
   search();
 }));
 let results = [], qTimer;
-$('#q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(search, 300); });
-async function search() {
+// YouTube searches use a small daily allowance, so they only run on Enter (or when a link is pasted)
+$('#q').addEventListener('input', () => {
+  clearTimeout(qTimer);
+  if (src === 'youtube' && !looksLikeYouTubeLink($('#q').value)) return;
+  qTimer = setTimeout(search, 300);
+});
+$('#qForm').addEventListener('submit', (e) => { e.preventDefault(); clearTimeout(qTimer); search(true); });
+async function search(explicit = false) {
   const q = $('#q').value.trim();
   $('#searchMsg').textContent = '';
   if (src === 'spotify' && !q) { $('#results').innerHTML = ''; $('#searchMsg').textContent = 'Type to search Spotify.'; return; }
-  const r = await fetch(src === 'library' ? `/api/library?q=${encodeURIComponent(q)}` : `/api/spotify/search?q=${encodeURIComponent(q)}`);
+  if (src === 'youtube' && (!q || (!explicit && !looksLikeYouTubeLink(q)))) {
+    results = []; $('#results').innerHTML = '';
+    $('#searchMsg').textContent = 'Type a song and press Search, or paste a YouTube link.';
+    return;
+  }
+  const url = src === 'library' ? `/api/library?q=${encodeURIComponent(q)}`
+    : src === 'spotify' ? `/api/spotify/search?q=${encodeURIComponent(q)}`
+    : `/api/youtube/search?${new URLSearchParams({ q, karaoke: $('#ytKaraoke').checked ? '1' : '0' })}`;
+  if (src === 'youtube') $('#searchMsg').textContent = 'Searching…';
+  const r = await fetch(url);
   const j = await r.json();
+  $('#searchMsg').textContent = '';
   if (!r.ok) { results = []; $('#results').innerHTML = ''; $('#searchMsg').textContent = r.status === 401 ? 'The host hasn\'t logged in to Spotify yet.' : j.error; return; }
-  results = j.slice(0, 40);
+  results = (src === 'youtube' ? j.results : j).slice(0, 40);
   if (!results.length) $('#searchMsg').textContent = q ? 'No matches.' : 'The host has no local songs yet.';
   $('#results').innerHTML = results.map((t, i) => `
     <div class="track" data-i="${i}">${t.art ? `<img src="${esc(t.art)}" loading="lazy" onerror="this.style.visibility='hidden'">` : '<div class="noart"></div>'}
-      <div class="meta"><div class="t ellipsis">${esc(t.title)}</div><div class="a ellipsis">${esc(t.artist)}</div></div>
-      <div class="acts"><button class="sm" data-mode="original">Original</button><button class="sm primary" data-mode="karaoke">Karaoke</button></div></div>`).join('');
+      <div class="meta"><div class="t ellipsis">${esc(t.title)}</div><div class="a ellipsis">${esc(t.artist)}${t.source === 'youtube' && t.karaoke ? ' · <span style="color:var(--accent)">karaoke</span>' : ''}</div></div>
+      <div class="acts">${t.source === 'youtube' ? '<button class="sm primary" data-mode="original">Add</button>'
+        : '<button class="sm" data-mode="original">Original</button><button class="sm primary" data-mode="karaoke">Karaoke</button>'}</div></div>`).join('');
 }
 $('#results').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-mode]'); if (!b) return;

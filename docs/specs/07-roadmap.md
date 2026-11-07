@@ -7,6 +7,7 @@ Status: Living document
 |---|---|---|
 | Spotify | Can't strip vocals, change key or score. | DRM (EME). The karaoke-version finder is the workaround. |
 | Spotify | 5 users per developer-mode app, owner needs Premium, search capped at 10 results. | Spotify policy since Feb/Mar 2026. Extended quota needs an organisation with 250k MAU. |
+| YouTube | Original audio only (no removal, key change or scoring). About 100 searches a day on the default API quota. | The audio is inside YouTube's iframe. Downloading is against YouTube's ToS. Links work without quota. |
 | Latency | ~100–200 ms phone→speaker. | Opus 20 ms frames + jitter buffer + output buffer. Phone-side monitoring isn't possible (Bluetooth adds more). |
 | Spectral removal | Also removes centred bass-mid instruments (snare body, centred keys). Weak on mono or heavily reverbed mixes. | By design. Demucs is the quality path. |
 | Key change | Formants shift (slight "chipmunk" at +4 and above). | Phase vocoder without formant preservation. |
@@ -32,7 +33,7 @@ Status: Living document
 
 **P3: later**
 11. Remote singers over the internet (TURN, auth, latency compensation).
-12. YouTube/other sources only via official embeds (original audio, no stripping).
+12. ~~YouTube via official embeds~~: done ([08](08-youtube.md)).
 13. Harmony detection (sing a third above the melody and get scored on it).
 14. Vibrato detection and coaching (rate/depth) as a separate steadiness metric.
 
@@ -44,3 +45,4 @@ Status: Living document
 | 2026-11-06 | DSP in Rust `no_std` WASM inside AudioWorklets. | Deterministic, allocation-free, ~2 % CPU, one 22 KB binary for host and phone. |
 | 2026-11-07 | Singing history stored on phones only. | Privacy and no account system. The server has no personal data except Spotify tokens. |
 | 2026-11-07 | Score octave-agnostic (folded intervals). | Lets people sing comfortably an octave away from the original. |
+| 2026-11-07 | YouTube via the official IFrame player only; search on Enter; 24 h search cache; oEmbed for links. | ToS compliance, and the ~100 searches/day default quota. |

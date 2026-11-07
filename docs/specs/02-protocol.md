@@ -25,7 +25,7 @@ Rules: the **mic is always the offerer**. ICE servers are empty (LAN only). The 
 ## Queue
 | Message (C→S) | Who | Effect |
 |---|---|---|
-| `{type:'queue:add', item}` | anyone | `item = {source:'local'\|'spotify', id, title, artist, album, duration(ms), art, mode:'original'\|'karaoke', singer}`. Server assigns `qid` and records `addedBy`. If `singer` is a string (even empty) it's kept as-is, otherwise the sender's name is used. |
+| `{type:'queue:add', item}` | anyone | `item = {source:'local'\|'spotify'\|'youtube', id, title, artist, album, duration(ms), art, mode:'original'\|'karaoke', singer}`. Server assigns `qid` and records `addedBy`. If `singer` is a string (even empty) it's kept as-is, otherwise the sender's name is used. |
 | `{type:'queue:remove', qid}` | anyone | |
 | `{type:'queue:move', qid, dir:-1\|1}` | anyone | |
 | `{type:'queue:mode', qid, mode}` | anyone | |
@@ -50,7 +50,7 @@ Rules: the **mic is always the offerer**. ICE servers are empty (LAN only). The 
 ## REST
 | Method & path | Access | Purpose |
 |---|---|---|
-| `GET /api/info` | any | `{micUrls, qr, demucs, spotify:{configured,loggedIn,redirectUri}, isHostOrigin}` |
+| `GET /api/info` | any | `{micUrls, qr, demucs, spotify:{configured,loggedIn,redirectUri}, youtube:{configured,searchesToday,dailyLimit}, isHostOrigin}` |
 | `GET /api/library?q=` | any | ≤ 300 tracks: `{source:'local', id, title, artist, album, duration, art, stems:'none'\|'queued'\|'running'\|'ready'\|'error', stemProgress, vocalRange}` |
 | `GET /api/track/:id` | any | One track (same shape). |
 | `POST /api/library/rescan` | any | Rescan `MUSIC_DIR`. |
@@ -66,6 +66,9 @@ Rules: the **mic is always the offerer**. ICE servers are empty (LAN only). The 
 | `GET /api/spotify/token` | host | Access token for the Web Playback SDK. |
 | `GET /api/spotify/search?q=` | any | ≤ 10 tracks (Spotify dev-mode cap). |
 | `GET /api/spotify/karaoke?title&artist&duration&id` | any | Ranked karaoke/instrumental candidates (see [04](04-playback-and-sources.md)). |
+| `GET /api/youtube/search?q&karaoke=0\|1` | any | `{results, cached?, link?}`. Links and IDs are resolved instead of searched. 400 `{needsKey}` without a key, 429 when the daily quota is used up. See [08](08-youtube.md). |
+| `GET /api/youtube/resolve?url=` | any | One video (Data API with a key, oEmbed without). |
+| `POST /api/youtube/config` `{apiKey}` | host | Save or clear the key. |
 
 ## Compatibility rules
 - Adding fields or message types: allowed any time.

@@ -14,6 +14,7 @@ flowchart LR
   P1["Phone 1<br/>https://LAN-IP:3443"]
   P2["Phone 2"]
   SP["Spotify (Web API + Playback SDK)"]
+  YT["YouTube (Data API, oEmbed, IFrame player)"]
   LR["LRCLIB lyrics"]
   H <-- "WebSocket /ws + REST" --> S
   P1 <-- "WebSocket /ws (wss) + REST" --> S
@@ -24,6 +25,8 @@ flowchart LR
   S -- "token, search" --> SP
   H -- "DRM playback" --> SP
   S -- "lyrics lookup" --> LR
+  S -- "search, link lookup" --> YT
+  H -- "embedded player" --> YT
 ```
 
 | Listener | Default | Env var | Who uses it | Why |
@@ -43,6 +46,7 @@ Both listeners serve the same Express app and the same WebSocket endpoint `/ws`.
 | `public/host.html`, `host.js` | Host browser | Playback (local `<audio>` / Spotify SDK), audio graph and mixer, WebRTC receiver, lyrics renderer, pitch lane, scoring, reports, loop/speed, key suggestions. |
 | `public/mic.html`, `mic.js` | Phone | Mic capture, WebRTC sender, queueing, transport controls, lyric display, report display. |
 | `public/practice.js` | Phone | Local pitch engine, tuner, drills, progress history. |
+| `public/youtube.js` | Server, host, phone, Node tests | Pure YouTube helpers: link/ID parsing, durations, title → artist/title, mapping. See [08](08-youtube.md). |
 | `public/training.js` | Host, phone, Node tests | Pure functions: note maths, scoring credit, steadiness, report builder, key suggestion, drill scoring. |
 | `public/dsp-worklet.js` | AudioWorklet | `music-dsp` and `voice-dsp` processors wrapping the WASM. |
 | `public/dsp.wasm` | AudioWorklet | Built from `dsp/` (Rust, `no_std`). See [03](03-dsp.md). |
@@ -63,6 +67,7 @@ phone N: remote stream ─► MediaStreamSource ─► voice-dsp (pitch + auto-t
 ```
 
 - Spotify audio is played by the SDK's own element and **cannot** enter this graph (EME/DRM). Its volume is set with `player.setVolume`.
+- YouTube audio lives in YouTube's cross-origin iframe and also can't enter the graph. Volume uses `player.setVolume`.
 - Each remote stream is also attached to a muted `<audio>` element. Chrome requires this before WebAudio receives remote WebRTC audio.
 - The guide (isolated vocal stem) is summed **before** `music-dsp` so key changes apply to it. Spectral cut is forced to 0 whenever stems are in use.
 
@@ -73,7 +78,8 @@ phone N: remote stream ─► MediaStreamSource ─► voice-dsp (pitch + auto-t
 | Queue, now playing, connected singers (+ ranges) | Server (`state`, `clients`) | Memory only |
 | Library index, stem job status | Server | Rescanned at start, stems in `.data/stems/<id>/` |
 | Song vocal ranges | Server | `.data/vocal-ranges.json` |
-| Spotify client ID + refresh token | Server | `.data/config.json` |
+| Spotify client ID + refresh token, YouTube API key + daily search count | Server | `.data/config.json` |
+| YouTube search cache | Server | `.data/youtube-cache.json` (24 h) |
 | Mixer settings | Host browser | `localStorage['karaoke-host']` |
 | Singer name, range, history | Phone | `localStorage['karaoke-name' / 'karaoke-range' / 'karaoke-history']` |
 

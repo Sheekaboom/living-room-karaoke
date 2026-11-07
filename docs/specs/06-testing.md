@@ -16,9 +16,12 @@ Status: Implemented
 - Chrome flags: `--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<voice.wav> --use-fake-ui-for-media-stream --ignore-certificate-errors --autoplay-policy=no-user-gesture-required`.
 - Tests talk to the host through `window.karaoke` (debug handle: `ctx, nodes, peers, current, party, playNext, position, songEnded, practiceLine, toggleLoop`). Keep it stable or update the suite.
 - Use `page.evaluate(() => el.click())` rather than `page.click()`: two tabs share one headless window and native clicks on a background tab are unreliable.
-- `SCREENSHOTS=<dir>` saves phone screenshots.
+- YouTube and lyrics run against `youtube-mocks.mjs`: a local mock of the Data API, oEmbed and LRCLIB (via `YOUTUBE_API_BASE` / `YOUTUBE_OEMBED_URL` / `LRCLIB_BASE`) and a stand-in `YT.Player` injected with `evaluateOnNewDocument`. No network needed.
+- `SCREENSHOTS=<dir>` saves screenshots.
 
-Current checks (all must pass): WebRTC connect; host hears E4; profile reaches host; phone tuner E4; phone queues; spectral cut > 30 dB on vocal and < 3 dB on side; phone loop toggle; loop jumps back; phone speed; AI split; AI mode; host report; phone report saved; accuracy 15–45 %; phone report card; song vocal range ≈ 69–81; key suggestion −5; hold target; room-mute during drill; hold drill 100 %; mic restored; range finder rejects one note; progress tab lists items; no page errors.
+Current checks (all must pass): WebRTC connect; host hears E4; profile reaches host; phone tuner E4; phone queues; spectral cut > 30 dB on vocal and < 3 dB on side; phone loop toggle; loop jumps back; phone speed; AI split; AI mode; host report; phone report saved; accuracy 15–45 %; phone report card; song vocal range ≈ 69–81; key suggestion −5; hold target; room-mute during drill; hold drill 100 %; mic restored; range finder rejects one note; progress tab lists items; the 20 YouTube checks listed in [08](08-youtube.md#testing); no page errors.
+
+Use `waitForFunction` rather than fixed sleeps when waiting on drills or anything else with variable timing.
 
 ## Manual device checklist (before a release)
 Run on real hardware. These can't be automated in CI.
@@ -28,6 +31,7 @@ Run on real hardware. These can't be automated in CI.
 - [ ] Feedback: with phones 1 m from speakers at party volume, no howl at the default mic volume (1.4) with reverb 30 %.
 - [ ] Spotify: login, search from the phone, original and karaoke-version playback, end-of-track advance, Try another.
 - [ ] LRCLIB: synced lyrics appear and the offset buttons shift them.
+- [ ] YouTube: real API key search, quota counter increments, pasted link without a key, a karaoke video plays with mics mixed in, an embedding-blocked video is skipped.
 - [ ] Real Demucs: AI split completes, the playing song switches over seamlessly, guide slider works, score is sensible.
 - [ ] Practice drills with headphones and with the phone speaker.
 - [ ] Host tab in the background: loops and the phone lyric feed keep working.

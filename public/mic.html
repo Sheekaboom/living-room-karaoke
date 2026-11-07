@@ -89,9 +89,10 @@
     <div class="card"><div class="small dim" style="text-align:center">Tuner</div><div id="tuner"></div></div>
 
     <div class="card">
-      <div class="seg" id="srcSeg"><button data-src="library" class="active">My music</button><button data-src="spotify">Spotify</button></div>
+      <div class="seg" id="srcSeg"><button data-src="library" class="active">My music</button><button data-src="spotify">Spotify</button><button data-src="youtube">YouTube</button></div>
       <p></p>
-      <input type="search" id="q" placeholder="Search for a song…">
+      <form id="qForm" class="row"><input type="search" id="q" placeholder="Search for a song…" enterkeyhint="search"><button type="submit" id="qGo" class="hidden">Search</button></form>
+      <label class="row small hidden" id="ytOpts" style="gap:6px;margin-top:8px"><input type="checkbox" id="ytKaraoke" checked> Karaoke versions only</label>
       <p class="small dim" id="searchMsg"></p>
       <div class="list" id="results"></div>
     </div>

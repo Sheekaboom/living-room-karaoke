@@ -42,6 +42,13 @@ A song that is playing switches to the AI version automatically once its split f
 
 Spotify login only works when the host screen is opened at `http://127.0.0.1:3000` on the server computer.
 
+## YouTube
+Open the **YouTube** tab on the host (or *YouTube* in the phone's song search) and paste any YouTube link to add the video. No setup needed.
+
+To **search** YouTube, add a free YouTube Data API key under **Setup** (instructions are on that tab). Search is limited to about 100 searches a day. Repeat searches are cached and links don't count, so that's plenty for a party.
+
+Videos play full-screen on the stage in YouTube's own player, with their **original audio**, and phone mics mix in as usual. Vocal removal, key change and scoring aren't possible for YouTube, so leave "Karaoke versions only" ticked to find videos with the vocals already removed and the lyrics on screen.
+
 ## Features
 - Phone mics stream to the host over WebRTC (Opus at 128 kbps, minimal jitter buffer). Each phone has its own volume control, mute button and noise-suppression toggle.
 - Synced lyrics come from LRCLIB (free, no API key), with a word-wipe highlight on screen and the current line shown on each phone. Use ±0.25s to fix the timing.

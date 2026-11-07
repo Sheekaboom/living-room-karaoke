@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 import { makeSong, makeVoice } from './fixtures.mjs';
+import { startYouTubeMock, fakeYouTubePlayer } from './youtube-mocks.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
@@ -18,9 +19,12 @@ const music = path.join(tmp, 'music'); fs.mkdirSync(music);
 makeSong(path.join(music, 'Robot Band - Test Melody.wav'));
 const voice = path.join(tmp, 'voice.wav'); makeVoice(voice);
 const HTTP = 3190, HTTPS = 3593;
+const ytMock = await startYouTubeMock();
 const server = spawn(process.execPath, ['server.js'], {
   cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, HTTP_PORT: HTTP, HTTPS_PORT: HTTPS, MUSIC_DIR: music, DATA_DIR: path.join(tmp, 'data'), DEMUCS_CMD: `${process.execPath} ${path.join(here, 'fake-demucs.mjs')}` },
+  env: { ...process.env, HTTP_PORT: HTTP, HTTPS_PORT: HTTPS, MUSIC_DIR: music, DATA_DIR: path.join(tmp, 'data'), DEMUCS_CMD: `${process.execPath} ${path.join(here, 'fake-demucs.mjs')}`,
+    YOUTUBE_API_BASE: `http://127.0.0.1:${ytMock.port}/yt`, YOUTUBE_OEMBED_URL: `http://127.0.0.1:${ytMock.port}/oembed`, YOUTUBE_API_KEY: '',
+    LRCLIB_BASE: `http://127.0.0.1:${ytMock.port}/lrclib` },
 });
 let serverLog = ''; server.stdout.on('data', (d) => (serverLog += d)); server.stderr.on('data', (d) => (serverLog += d));
 await new Promise((r, j) => { const t = setInterval(() => { if (serverLog.includes('Demucs found')) { clearInterval(t); r(); } }, 100); setTimeout(() => j(new Error('server did not start:\n' + serverLog)), 30000); });
@@ -38,6 +42,7 @@ const errors = [];
 try {
   const host = await browser.newPage(); await host.setViewport({ width: 1400, height: 860 });
   const mic = await browser.newPage(); await mic.setViewport({ width: 390, height: 1000, isMobile: true, deviceScaleFactor: 2 });
+  await host.evaluateOnNewDocument(fakeYouTubePlayer);
   for (const [n, p] of [['host', host], ['mic', mic]]) {
     p.on('pageerror', (e) => errors.push(`${n}: ${e.message}`));
     p.on('console', (m) => m.type() === 'error' && !/lrclib|Failed to load resource/.test(m.text()) && errors.push(`${n}: ${m.text()}`));
@@ -130,12 +135,66 @@ try {
   check('hold drill scores a steady E4 as 100%', /Score 100%/.test(drillMsg), drillMsg.slice(0, 90));
   await sleep(1000);
   check('mic is back on for the room after the drill', await host.evaluate(() => [...karaoke.peers.values()][0].rms > 0.05));
-  await click(mic, '[data-start=range]'); await sleep(5500);
-  check('range finder rejects a single repeated note', /very close/.test(await mic.$eval('[data-drill=range] .drill-msg', (e) => e.textContent)));
+  await click(mic, '[data-start=range]');
+  const rangeMsg = await mic.waitForFunction(() => /very close|Couldn't/.test(document.querySelector('[data-drill=range] .drill-msg')?.textContent || ''), { timeout: 15000 })
+    .then(() => mic.$eval('[data-drill=range] .drill-msg', (e) => e.textContent)).catch(() => 'timed out');
+  check('range finder rejects a single repeated note', /very close/.test(rangeMsg), rangeMsg.slice(0, 60));
   await click(mic, '#viewSeg [data-view=progress]'); await sleep(300);
   check('progress tab lists songs and drills', await mic.$eval('#progress', (e) => /Test Melody/.test(e.textContent) && /Hold a note/.test(e.textContent)));
 
+  // ── YouTube ──
+  await click(mic, '#viewSeg [data-view=sing]');
+  await click(mic, '#srcSeg [data-src=youtube]'); await sleep(200);
+  await mic.evaluate(() => { const q = document.querySelector('#q'); q.value = 'robot melody'; q.dispatchEvent(new Event('input')); }); await sleep(600);
+  check('YouTube does not search while typing', ytMock.calls.search === 0);
+  await mic.evaluate(() => document.querySelector('#qForm').requestSubmit()); await sleep(600);
+  check('YouTube search without an API key explains what to do', /API key/.test(await mic.$eval('#searchMsg', (e) => e.textContent)) && ytMock.calls.search === 0);
+  // paste a link: works without a key via oEmbed
+  await mic.evaluate(() => { const q = document.querySelector('#q'); q.value = 'https://youtu.be/bbbbbbbbbb2?si=x'; q.dispatchEvent(new Event('input')); }); await sleep(900);
+  const pasted = await mic.$$eval('#results .track .t', (els) => els.map((e) => e.textContent));
+  check('pasted YouTube link resolves without a key (oEmbed)', pasted.length === 1 && pasted[0] === 'Robot Band & Friends - Second Song' && ytMock.calls.oembed === 1, pasted.join(','));
+  // host adds the API key in Setup
+  await click(host, '[data-tab=setup]');
+  await host.evaluate(() => { document.querySelector('#ytKey').value = 'AIzaTEST_KEY_0123456789abcdefghijklmnop'; document.querySelector('#ytSave').click(); }); await sleep(600);
+  check('host saves a YouTube API key', /Saved/.test(await host.$eval('#ytSetupMsg', (e) => e.textContent)));
+  await mic.evaluate(() => { const q = document.querySelector('#q'); q.value = 'robot melody'; document.querySelector('#qForm').requestSubmit(); }); await sleep(900);
+  const found = await mic.$$eval('#results .track .t', (els) => els.map((e) => e.textContent));
+  check('YouTube search returns embeddable videos', found.length === 3 && ytMock.calls.search === 1, found.join(' | '));
+  check('"karaoke versions only" adds "karaoke" to the query', ytMock.calls.lastQuery === 'robot melody karaoke', ytMock.calls.lastQuery);
+  await host.evaluate(() => { document.querySelector('[data-tab=youtube]').click(); document.querySelector('#ytSearch').value = 'robot melody'; document.querySelector('#ytForm').requestSubmit(); }); await sleep(800);
+  check('repeat YouTube search is served from cache', ytMock.calls.search === 1 && /cache/.test(await host.$eval('#ytHint', (e) => e.textContent)));
+  // queue: blocked video first, then a karaoke video, then a second video
+  await host.evaluate(() => { const b = document.querySelectorAll('#ytList button[data-a=add]'); b[2].click(); b[0].click(); b[1].click(); }); await sleep(500);
+  check('YouTube videos are queued', (await host.evaluate(() => karaoke.party.queue.filter((q) => q.source === 'youtube').length)) === 3);
+  await host.evaluate(() => karaoke.playNext()); await sleep(1500);
+  const afterBlocked = await host.evaluate(() => ({ cur: karaoke.current?.item.id ?? null, log: window.__ytLog.map((x) => x.join(':')) }));
+  check('embedding-blocked video is skipped with a message', afterBlocked.cur === null && afterBlocked.log.includes('load:blockedvid3'), JSON.stringify(afterBlocked));
+  await host.evaluate(() => document.querySelector('#upNext [data-go]').click()); await sleep(1200);
+  const yv = await host.evaluate(() => ({ kind: karaoke.current?.kind, id: karaoke.current?.item.id, shown: !document.querySelector('#ytBox').classList.contains('hidden'),
+    vol: karaoke.yt.vol, lyricsHidden: document.querySelector('.lyricsBox').classList.contains('nolyrics'), note: document.querySelector('#npMode').textContent }));
+  check('YouTube video plays on the stage', yv.kind === 'youtube' && yv.id === 'aaaaaaaaaa1' && yv.shown, JSON.stringify(yv));
+  check('karaoke video hides the lyrics overlay (lyrics are in the video)', yv.lyricsHidden && /Karaoke video/.test(yv.note));
+  check('music volume is applied to the YouTube player', yv.vol === 80);
+  await click(mic, '[data-c=playpause]'); await sleep(400);
+  check('phone pauses the YouTube video', (await host.evaluate(() => karaoke.yt.getPlayerState())) === 2);
+  await click(mic, '[data-c=playpause]'); await sleep(300);
+  await setRange(host, '#speed', '0.8'); await sleep(200);
+  check('speed snaps to a rate YouTube supports', (await host.evaluate(() => karaoke.yt.rate)) === 0.75);
+  await setRange(host, '#speed', '1');
+  await sleep(6500); // fake video is 6 s long
+  const ended = await host.evaluate(() => ({ cur: karaoke.current, shown: !document.querySelector('#ytBox').classList.contains('hidden'), upnext: document.querySelector('#upNext').textContent }));
+  check('end of a YouTube video advances to the next-up card', ended.cur === null && !ended.shown && /Second Song/.test(ended.upnext));
+  await host.evaluate(() => document.querySelector('#upNext [data-go]').click()); await sleep(1000);
+  check('next YouTube video starts', (await host.evaluate(() => karaoke.current?.item.id)) === 'bbbbbbbbbb2');
+  await sleep(1500);
+  const ov = await host.evaluate(() => ({ hidden: document.querySelector('.lyricsBox').classList.contains('nolyrics'), text: document.querySelector('#lyrics').textContent }));
+  check('non-karaoke video overlays synced lyrics (title parsed to artist/title)', !ov.hidden && /little robot|second line/.test(ov.text), ov.text.trim().slice(0, 60));
+  check('phone receives the lyric feed for a YouTube video', /robot|second line|third/i.test(await mic.$eval('#lyr', (e) => e.textContent)));
+  if (process.env.SCREENSHOTS) { await host.bringToFront(); await host.screenshot({ path: path.join(process.env.SCREENSHOTS, 'host-youtube.png') }); }
+  await host.evaluate(() => karaoke.songEnded());
+
   if (process.env.SCREENSHOTS) {
+    await mic.bringToFront();
     await mic.screenshot({ path: path.join(process.env.SCREENSHOTS, 'phone-progress.png'), fullPage: true });
     await click(mic, '#viewSeg [data-view=practice]'); await mic.screenshot({ path: path.join(process.env.SCREENSHOTS, 'phone-practice.png'), fullPage: true });
   }
@@ -143,6 +202,7 @@ try {
 } finally {
   await browser.close();
   server.kill();
+  ytMock.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');

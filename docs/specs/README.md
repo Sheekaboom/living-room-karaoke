@@ -12,6 +12,7 @@ These documents describe how Living-Room Karaoke works **today** and the rules f
 | 05 | [Singing trainer](05-training.md) | Scoring, reports, tuner, drills, key suggestion, loop/speed |
 | 06 | [Testing](06-testing.md) | Unit, DSP, end-to-end and manual device tests |
 | 07 | [Roadmap](07-roadmap.md) | Known limitations and prioritised backlog |
+| 08 | [YouTube](08-youtube.md) | YouTube search, links, embedded player |
 | — | [Template](TEMPLATE.md) | Copy this to propose a new feature |
 
 ## Working with specs

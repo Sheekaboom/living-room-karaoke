@@ -1,5 +1,6 @@
 // Host screen: plays music, shows lyrics, receives phone mics over WebRTC and mixes them.
 import { NOTE, hzToMidi, fold, credit, buildReport, suggestKey, noteName } from '/training.js';
+import { guessArtistTitle, isKaraokeTitle } from '/youtube.js';
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (s) => { s = Math.max(0, s | 0); return `${(s / 60) | 0}:${String(s % 60).padStart(2, '0')}`; };
@@ -55,6 +56,7 @@ function applySettings() {
   musicDsp?.port.postMessage({ cut: spectral ? S.cut : 0, width: S.width, semitones: current?.kind === 'local' ? S.semitones : 0 });
   for (const p of peers.values()) p.voice?.port.postMessage({ tune: S.tune, speed: S.tuneSpeed, key: S.tuneKey });
   if (spPlayer) spPlayer.setVolume(Math.min(1, S.musicVol)).catch(() => {});
+  if (yt && current?.kind === 'youtube') yt.setVolume(Math.round(Math.min(1, S.musicVol) * 100));
 }
 
 // ───────────── audio graph ─────────────
@@ -361,20 +363,67 @@ async function playSpotify(uri) {
   }
 }
 
+// ───────────── YouTube (official IFrame player) ─────────────
+let yt = null, ytReady = null;
+const YT_ERRORS = {
+  2: 'That YouTube video ID is invalid.', 5: "YouTube couldn't play that video in this browser.",
+  100: 'That YouTube video was removed or is private.', 101: "The video's owner doesn't allow it to be played in other apps.",
+  150: "The video's owner doesn't allow it to be played in other apps.", 153: 'YouTube refused to play it here (missing referrer). Open the host at http://127.0.0.1.',
+};
+function ensureYT() {
+  if (ytReady) return ytReady;
+  ytReady = new Promise((resolve, reject) => {
+    const make = () => {
+      yt = new YT.Player('ytPlayer', {
+        width: '100%', height: '100%',
+        playerVars: { autoplay: 1, controls: 0, disablekb: 1, rel: 0, playsinline: 1, iv_load_policy: 3, fs: 0, origin: location.origin },
+        events: { onReady: () => resolve(yt), onStateChange: onYtState, onError: onYtError },
+      });
+    };
+    if (window.YT?.Player) return make();
+    window.onYouTubeIframeAPIReady = make;
+    const sc = document.createElement('script');
+    sc.src = 'https://www.youtube.com/iframe_api';
+    sc.onerror = () => { ytReady = null; reject(new Error("Couldn't load the YouTube player. Is this computer online?")); };
+    document.head.appendChild(sc);
+    setTimeout(() => { if (!yt) { ytReady = null; reject(new Error('The YouTube player took too long to load.')); } }, 20000);
+  });
+  return ytReady;
+}
+function onYtState(e) {
+  if (current?.kind !== 'youtube') return;
+  if (e.data === 1) current.ytStarted = true;
+  if (e.data === 0 && current.ytStarted) songEnded();
+  updatePlayBtn();
+}
+function onYtError(e) {
+  if (current?.kind !== 'youtube') return;
+  toast(YT_ERRORS[e.data] || `YouTube error ${e.data}. Skipping.`, 7000);
+  songEnded();
+}
+function showVideo(on) {
+  $('#ytBox').classList.toggle('hidden', !on);
+  $('.lyricsBox').classList.toggle('video', on);
+  $('.lyricsBox').classList.toggle('nolyrics', on && !current?.ytLyrics);
+}
+
 // ───────────── playback ─────────────
 function isPlaying() {
   if (!current) return false;
+  if (current.kind === 'youtube') return yt?.getPlayerState?.() === 1;
   return current.kind === 'local' ? !nodes.musicEl.paused : !!spState && !spState.paused;
 }
 function position() { // seconds, as heard
   if (!current) return 0;
   if (current.kind === 'local') return Math.max(0, nodes.musicEl.currentTime - dspLatency - (ctx?.outputLatency || 0));
+  if (current.kind === 'youtube') return yt?.getCurrentTime?.() || 0;
   if (!spState) return 0;
   return (spState.position + (spState.paused ? 0 : performance.now() - spState.ts)) / 1000;
 }
 function duration() {
   if (!current) return 0;
   if (current.kind === 'local') return nodes.musicEl.duration || current.item.duration / 1000 || 0;
+  if (current.kind === 'youtube') return yt?.getDuration?.() || current.item.duration / 1000 || 0;
   return (spState?.duration || current.item.duration || 0) / 1000;
 }
 async function stopAll() {
@@ -382,6 +431,8 @@ async function stopAll() {
   for (const el of [nodes.musicEl, nodes.guideEl]) { el.defaultPlaybackRate = 1; el.playbackRate = 1; }
   nodes.musicEl.removeAttribute('src'); nodes.guideEl.removeAttribute('src');
   if (spPlayer && current?.kind === 'spotify') await spPlayer.pause().catch(() => {});
+  if (yt && current?.kind === 'youtube') { try { yt.stopVideo(); yt.setPlaybackRate?.(1); } catch {} }
+  showVideo(false);
 }
 
 async function playItem(item, opts = {}) {
@@ -419,6 +470,16 @@ async function playItem(item, opts = {}) {
       if (opts.loopLine != null) current.note += ' <span class="badge warn">Practice loop</span>';
       applySettings();
       await nodes.musicEl.play();
+    } else if (item.source === 'youtube') {
+      current.ytLyrics = !(item.karaoke || isKaraokeTitle(item.title));
+      current.note = `<span class="badge">YouTube</span>${current.ytLyrics ? '' : ' <span class="badge pink">Karaoke video</span>'} <button class="sm" id="btnYtLyrics">${current.ytLyrics ? 'Hide' : 'Show'} lyrics overlay</button>`;
+      renderNow();
+      const p = await ensureYT();
+      if (current?.item.qid !== item.qid) return;
+      showVideo(true);
+      applySettings();
+      p.loadVideoById(item.id);
+      if (opts.loopLine != null) setSpeed(0.85);
     } else {
       let uri = item.id;
       if (item.mode === 'karaoke') {
@@ -478,6 +539,7 @@ function reportHtml(r) {
 function songEnded() {
   if (!current) return;
   const fin = current;
+  if (fin.kind === 'youtube') { try { yt?.stopVideo(); } catch {} showVideo(false); }
   fin.lyrLines = lyr?.synced || null;
   stopLoop();
   const reports = makeReports(fin);
@@ -533,6 +595,15 @@ function updateLoopBtn() {
   $('#btnLoop').textContent = on ? (current.loop.line >= 0 ? `🔁 Line ${current.loop.line + 1}` : '🔁 Looping') : '🔁 Loop line';
 }
 function setSpeed(v) {
+  if (current?.kind === 'youtube' && yt) {
+    // YouTube only offers certain rates; use the closest (it keeps pitch itself)
+    const rates = yt.getAvailablePlaybackRates?.() || [0.5, 0.75, 1];
+    const r = rates.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a), 1);
+    yt.setPlaybackRate(r); current.speed = r;
+    $('#speed').value = String(v);
+    if (r !== v) toast(`YouTube supports ${Math.round(r * 100)}% here, not ${Math.round(v * 100)}%.`, 2500);
+    return;
+  }
   if (!current || current.kind !== 'local') { $('#speed').value = '1'; return; }
   current.speed = v;
   $('#speed').value = String(v);
@@ -548,12 +619,14 @@ function skip() { if (!current && advancing) { clearTimeout(advancing.timer); ad
 function togglePlay() {
   if (!current) return playNext();
   if (current.kind === 'local') nodes.musicEl.paused ? nodes.musicEl.play() : nodes.musicEl.pause();
+  else if (current.kind === 'youtube') yt?.getPlayerState() === 1 ? yt.pauseVideo() : yt?.playVideo();
   else spPlayer?.togglePlay();
   setTimeout(updatePlayBtn, 100);
 }
 function seekTo(sec) {
   if (!current) return;
   if (current.kind === 'local') nodes.musicEl.currentTime = sec;
+  else if (current.kind === 'youtube') yt?.seekTo(sec, true);
   else spPlayer?.seek(Math.round(sec * 1000));
 }
 const updatePlayBtn = () => { $('#btnPlay').textContent = isPlaying() ? '❚❚' : '▶︎'; };
@@ -578,11 +651,18 @@ function onStems(track) {
 
 // ───────────── lyrics ─────────────
 async function loadLyrics(item) {
-  const q = new URLSearchParams({ artist: item.artist, title: item.title, album: item.album || '', duration: item.duration || 0 });
+  const who = item.source === 'youtube' ? guessArtistTitle(item.title, item.artist) : { artist: item.artist, title: item.title };
+  const q = new URLSearchParams({ artist: who.artist, title: who.title, album: item.album || '', duration: item.source === 'youtube' ? 0 : item.duration || 0 });
   try {
     const r = await (await fetch(`/api/lyrics?${q}`)).json();
     if (current?.item.qid !== item.qid) return;
     lyr = r; lyrIdx = -2;
+    if (current.kind === 'youtube' && !r.synced && current.ytLyrics) {
+      // nothing timed to overlay on the video: keep the picture clean
+      current.ytLyrics = false;
+      current.note = current.note.replace(/<button class="sm" id="btnYtLyrics">.*?<\/button>/, '<span class="badge">No synced lyrics found</span>');
+      showVideo(true); renderNow();
+    }
     if (current.pendingLoopLine != null) { setLoopLine(current.pendingLoopLine); current.pendingLoopLine = null; seekTo(current.loop.a); }
   } catch { lyr = null; }
   renderLyrics(position(), true);
@@ -629,6 +709,11 @@ function renderNow() {
   $('#npMode').innerHTML = current?.note || '';
   $('#btnMakeAI')?.addEventListener('click', makeAI);
   $('#btnAlt')?.addEventListener('click', tryAltKaraoke);
+  $('#btnYtLyrics')?.addEventListener('click', (e) => {
+    current.ytLyrics = !current.ytLyrics;
+    current.note = current.note.replace(/(Hide|Show) lyrics overlay/, `${current.ytLyrics ? 'Hide' : 'Show'} lyrics overlay`);
+    showVideo(true); renderNow();
+  });
   $('#btnKey')?.addEventListener('click', (e) => {
     const k = Number(e.target.dataset.k), el = $('#semitones');
     el.value = k; el.dispatchEvent(new Event('input'));
@@ -650,7 +735,7 @@ function trackHtml(t, acts) {
 function renderQueue() {
   const q = party.queue;
   $('#queue').innerHTML = q.length ? q.map((it, i) => trackHtml({ ...it, id: it.qid, extra: ` · <span style="color:var(--accent)">🎤 ${esc(it.singer || 'Anyone')}</span>` },
-    `<button class="sm ${it.mode === 'karaoke' ? 'on' : ''}" data-q="mode" title="Toggle karaoke/original">${it.mode === 'karaoke' ? 'Karaoke' : 'Original'}</button>
+    `${it.source === 'youtube' ? '<span class="badge">YouTube</span>' : `<button class="sm ${it.mode === 'karaoke' ? 'on' : ''}" data-q="mode" title="Toggle karaoke/original">${it.mode === 'karaoke' ? 'Karaoke' : 'Original'}</button>`}
      <button class="sm" data-q="up" ${i ? '' : 'disabled'}>↑</button><button class="sm" data-q="down" ${i < q.length - 1 ? '' : 'disabled'}>↓</button><button class="sm" data-q="del">✕</button>`)).join('')
     : '<p class="dim small">Queue is empty. Add songs from Library or Spotify, or from a phone.</p>';
   if (!current) renderNow();
@@ -666,7 +751,7 @@ $('#queue').addEventListener('click', (e) => {
 });
 function renderSingers() {
   const names = party.singers.map((s) => s.name);
-  for (const sel of [$('#singerPick'), $('#singerPick2')]) {
+  for (const sel of [$('#singerPick'), $('#singerPick2'), $('#singerPick3')]) {
     const v = sel.value;
     sel.innerHTML = ['Anyone', ...new Set(names), 'Host'].map((n) => `<option>${esc(n)}</option>`).join('');
     if ([...sel.options].some((o) => o.value === v)) sel.value = v;
@@ -760,6 +845,37 @@ $('#spSave').addEventListener('click', async () => {
 });
 $('#spLogout').addEventListener('click', async () => { await fetch('/api/spotify/logout', { method: 'POST' }); spPlayer?.disconnect(); spPlayer = null; await loadInfo(); });
 
+// youtube UI
+let ytResults = [];
+async function ytSearchUI(e) {
+  e?.preventDefault();
+  const q = $('#ytSearch').value.trim();
+  if (!q) return;
+  $('#ytHint').textContent = 'Searching…';
+  const r = await fetch(`/api/youtube/search?${new URLSearchParams({ q, karaoke: $('#ytKaraoke').checked ? '1' : '0' })}`);
+  const j = await r.json();
+  if (!r.ok) { $('#ytHint').textContent = j.error; ytResults = []; $('#ytList').innerHTML = ''; return; }
+  ytResults = j.results;
+  $('#ytHint').textContent = j.link ? '' : (ytResults.length ? (j.cached ? 'From cache (no quota used).' : '') : 'No embeddable videos found.');
+  $('#ytList').innerHTML = ytResults.map((t, i) => trackHtml({ ...t, id: String(i), extra: `${t.duration ? ' · ' + fmt(t.duration / 1000) : ''}${t.karaoke ? ' · <span style="color:var(--accent)">karaoke</span>' : ''}` },
+    '<button class="sm primary" data-a="add">Add</button>')).join('');
+  loadInfo();
+}
+$('#ytForm').addEventListener('submit', ytSearchUI);
+$('#ytSearch').addEventListener('paste', () => setTimeout(() => /youtu/i.test($('#ytSearch').value) && ytSearchUI(), 0));
+$('#ytList').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-a]'); if (!b) return;
+  const t = ytResults[Number(b.closest('.track').dataset.id)];
+  addToQueue({ ...t, mode: 'original' }, 'original', $('#singerPick3').value);
+});
+$('#ytSave').addEventListener('click', async () => {
+  const r = await fetch('/api/youtube/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: $('#ytKey').value }) });
+  const j = await r.json();
+  $('#ytSetupMsg').textContent = r.ok ? (j.configured ? 'Saved. YouTube search is on.' : 'Key removed.') : j.error;
+  $('#ytKey').value = '';
+  loadInfo();
+});
+
 // tabs, transport
 document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
 function showTab(name) {
@@ -823,6 +939,10 @@ async function loadInfo() {
   $('#demucsInfo').innerHTML = info.demucs
     ? '✅ Demucs found. Click <b>AI split</b> on a song in Library for a studio-quality instrumental (takes ~1× song length on CPU, much faster with a GPU).'
     : 'Not installed. Spectral removal works without it. For much better results install Python, then run <code>pip install demucs</code> and restart the server.';
+  const yq = info.youtube;
+  $('#ytSetupMsg').textContent ||= yq.configured ? `Key saved. ${yq.searchesToday} of ~${yq.dailyLimit} searches used today (resets midnight Pacific).` : '';
+  if (!$('#ytHint').textContent || /searches used|Paste a YouTube link/.test($('#ytHint').textContent))
+    $('#ytHint').textContent = yq.configured ? `${yq.searchesToday} of ~${yq.dailyLimit} YouTube searches used today. Repeat searches are cached.` : 'Paste a YouTube link to add a video. Add an API key in Setup to search.';
   if (location.hostname !== '127.0.0.1' && info.spotify.configured) {
     $('#hostWarn').textContent = `For Spotify to work, open the host screen at http://127.0.0.1:${location.port === '3443' ? 3000 : location.port || 3000} on the server computer.`;
     $('#hostWarn').classList.remove('hidden');
@@ -846,7 +966,7 @@ $('#startBtn').addEventListener('click', async () => {
 });
 
 // handy for debugging from the browser console
-window.karaoke = { get ctx() { return ctx; }, nodes, peers, get current() { return current; }, get party() { return party; }, playNext, position, songEnded, practiceLine, toggleLoop };
+window.karaoke = { get yt() { return yt; }, get ctx() { return ctx; }, nodes, peers, get current() { return current; }, get party() { return party; }, playNext, position, songEnded, practiceLine, toggleLoop };
 
 loadSettings();
 await loadInfo();

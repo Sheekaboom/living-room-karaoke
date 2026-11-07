@@ -16,6 +16,7 @@ import selfsigned from 'selfsigned';
 import multer from 'multer';
 import { parseFile } from 'music-metadata';
 import QRCode from 'qrcode';
+import { parseYouTubeId, looksLikeYouTubeLink, mapVideo, decodeEntities, isKaraokeTitle, pacificDay } from './public/youtube.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
@@ -35,6 +36,7 @@ for (const d of [MUSIC_DIR, DATA_DIR, STEMS_DIR, CERT_DIR]) fs.mkdirSync(d, { re
 let config = {};
 try { config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch {}
 if (process.env.SPOTIFY_CLIENT_ID) config.spotifyClientId = process.env.SPOTIFY_CLIENT_ID;
+if (process.env.YOUTUBE_API_KEY) config.youtubeApiKey = process.env.YOUTUBE_API_KEY;
 const saveConfig = () => fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 // measured vocal range of each song's lead vocal (filled in by the host after it plays an AI-split song)
 const RANGES_FILE = path.join(DATA_DIR, 'vocal-ranges.json');
@@ -231,7 +233,7 @@ function parseLRC(lrc) {
   return lines.sort((a, b) => a[0] - b[0]);
 }
 async function lrclib(pathAndQuery) {
-  const r = await fetch(`https://lrclib.net${pathAndQuery}`, { headers: { 'User-Agent': 'LivingRoomKaraoke/1.0' } });
+  const r = await fetch(`${process.env.LRCLIB_BASE || 'https://lrclib.net'}${pathAndQuery}`, { headers: { 'User-Agent': 'LivingRoomKaraoke/1.0' } });
   if (!r.ok) return null;
   return r.json();
 }
@@ -330,6 +332,70 @@ async function findKaraokeVersions({ title, artist, duration, id }) {
     scored.push({ ...r, score: s });
   }
   return scored.sort((a, b) => b.score - a.score).slice(0, 8);
+}
+
+// ---------- YouTube (Data API v3 for search, oEmbed for pasted links) ----------
+const YT_BASE = process.env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3';
+const YT_OEMBED = process.env.YOUTUBE_OEMBED_URL || 'https://www.youtube.com/oembed';
+const YT_DAILY_SEARCHES = 100; // default search.list allowance per Google Cloud project
+const YT_CACHE_FILE = path.join(DATA_DIR, 'youtube-cache.json');
+const YT_CACHE_TTL = 24 * 3600e3;
+let ytCache = {};
+try { ytCache = JSON.parse(fs.readFileSync(YT_CACHE_FILE, 'utf8')); } catch {}
+const ytSearchesToday = () => (config.ytQuota?.day === pacificDay() ? config.ytQuota.searches : 0);
+function saveYtCache() {
+  const entries = Object.entries(ytCache).filter(([, v]) => Date.now() - v.at < YT_CACHE_TTL).sort((a, b) => b[1].at - a[1].at).slice(0, 300);
+  ytCache = Object.fromEntries(entries);
+  fs.writeFile(YT_CACHE_FILE, JSON.stringify(ytCache), () => {});
+}
+async function ytApi(endpoint, params) {
+  const r = await fetch(`${YT_BASE}/${endpoint}?${new URLSearchParams({ ...params, key: config.youtubeApiKey })}`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const reason = j.error?.errors?.[0]?.reason || '';
+    const e = new Error(/quota/i.test(reason) ? 'Daily YouTube search limit reached (it resets at midnight Pacific). You can still paste YouTube links.'
+      : /keyInvalid|badRequest/i.test(reason) || r.status === 400 ? 'YouTube rejected the API key. Check it in Setup.'
+      : `YouTube error ${r.status}: ${j.error?.message || reason}`);
+    e.status = r.status === 403 && /quota/i.test(reason) ? 429 : r.status;
+    throw e;
+  }
+  return j;
+}
+async function ytVideos(ids) {
+  if (!ids.length) return [];
+  const j = await ytApi('videos', { part: 'snippet,contentDetails,status', id: ids.join(','), maxResults: '50' });
+  const byId = new Map((j.items || []).map((v) => [v.id, v]));
+  return ids.map((id) => byId.get(id)).filter((v) => v && v.status?.embeddable !== false).map(mapVideo);
+}
+async function ytSearch(q, karaoke) {
+  const query = karaoke && !/karaoke|instrumental/i.test(q) ? `${q} karaoke` : q;
+  const key = query.toLowerCase().replace(/\s+/g, ' ').trim();
+  const hit = ytCache[key];
+  if (hit && Date.now() - hit.at < YT_CACHE_TTL) return { results: hit.results, cached: true };
+  if (!config.youtubeApiKey) { const e = new Error('YouTube search needs an API key (host: Setup tab). You can still paste a YouTube link.'); e.status = 400; e.needsKey = true; throw e; }
+  const j = await ytApi('search', { part: 'snippet', type: 'video', videoEmbeddable: 'true', maxResults: '15', q: query });
+  config.ytQuota = { day: pacificDay(), searches: ytSearchesToday() + 1 };
+  saveConfig();
+  const ids = (j.items || []).map((x) => x.id?.videoId).filter(Boolean);
+  const results = await ytVideos(ids);
+  ytCache[key] = { at: Date.now(), results };
+  saveYtCache();
+  return { results, cached: false };
+}
+async function ytResolve(input) {
+  const id = parseYouTubeId(input);
+  if (!id) { const e = new Error("That doesn't look like a YouTube link."); e.status = 400; throw e; }
+  if (config.youtubeApiKey) {
+    const [v] = await ytVideos([id]);
+    if (!v) { const e = new Error("That video can't be played here (private, removed, or the owner blocks embedding)."); e.status = 404; throw e; }
+    return v;
+  }
+  const r = await fetch(`${YT_OEMBED}?${new URLSearchParams({ url: `https://www.youtube.com/watch?v=${id}`, format: 'json' })}`);
+  if (!r.ok) { const e = new Error("That video can't be played here (private, removed, or the owner blocks embedding)."); e.status = 404; throw e; }
+  const j = await r.json();
+  const title = decodeEntities(j.title || id);
+  return { source: 'youtube', id, title, artist: decodeEntities(j.author_name || ''), album: '', duration: 0,
+    art: j.thumbnail_url || `https://i.ytimg.com/vi/${id}/mqdefault.jpg`, karaoke: isKaraokeTitle(title) };
 }
 
 // ---------- shared party state ----------
@@ -455,6 +521,7 @@ app.get('/api/info', async (req, res) => {
     qr: urls[0] ? await QRCode.toDataURL(urls[0], { margin: 1, width: 360 }) : null,
     demucs: !!demucsCmd,
     spotify: { configured: !!config.spotifyClientId, loggedIn: !!config.spotifyRefresh, redirectUri: SPOTIFY_REDIRECT },
+    youtube: { configured: !!config.youtubeApiKey, searchesToday: ytSearchesToday(), dailyLimit: YT_DAILY_SEARCHES },
     isHostOrigin: isLoopback(req),
   });
 });
@@ -502,7 +569,7 @@ const artCache = new Map();
 const PLACEHOLDER_ART = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#262638"/><text x="32" y="42" font-size="28" text-anchor="middle" fill="#8d8ba6">♪</text></svg>';
 app.get('/api/art/:id', async (req, res) => {
   const t = library.get(req.params.id);
-  if (!t) return res.sendStatus(404);
+  if (!t) return res.set('Cache-Control', 'max-age=3600').type('svg').send(PLACEHOLDER_ART);
   if (!artCache.has(t.id)) {
     try { const m = await parseFile(t.file); const pic = m.common.picture?.[0]; artCache.set(t.id, pic ? { type: pic.format, data: Buffer.from(pic.data) } : null); }
     catch { artCache.set(t.id, null); }
@@ -561,6 +628,24 @@ app.get('/api/spotify/karaoke', wrap((req) => findKaraokeVersions({
   title: String(req.query.title || ''), artist: String(req.query.artist || ''),
   duration: Number(req.query.duration) || 0, id: String(req.query.id || ''),
 })));
+
+// youtube
+app.post('/api/youtube/config', hostOnly, (req, res) => {
+  const key = String(req.body.apiKey || '').trim();
+  if (key && !/^[\w-]{30,60}$/.test(key)) return res.status(400).json({ error: "That doesn't look like a Google API key." });
+  if (key) config.youtubeApiKey = key; else delete config.youtubeApiKey;
+  saveConfig();
+  res.json({ ok: true, configured: !!key });
+});
+app.get('/api/youtube/search', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json({ results: [] });
+  try {
+    if (looksLikeYouTubeLink(q)) return res.json({ results: [await ytResolve(q)], link: true });
+    res.json(await ytSearch(q, req.query.karaoke === '1'));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message, needsKey: !!e.needsKey }); }
+});
+app.get('/api/youtube/resolve', wrap((req) => ytResolve(String(req.query.url || ''))));
 
 // ---------- start ----------
 await scanLibrary();

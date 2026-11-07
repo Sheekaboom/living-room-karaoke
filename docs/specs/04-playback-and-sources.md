@@ -42,8 +42,11 @@ Lyrics are always fetched for the **original** title/artist/duration.
 
 Not available for Spotify: spectral removal, key change, speed, reference pitch/scoring (pitch lane still shows singers).
 
+## YouTube
+See [08 — YouTube](08-youtube.md). In short: official embedded player, original audio only, search via the Data API (optional key, about 100 searches a day, cached 24 h), pasted links via oEmbed with no key.
+
 ## Lyrics
-- Source: LRCLIB. First `/api/get` with artist, cleaned title, album and duration; if that has no synced lyrics, `/api/search` picks the synced result closest in duration.
+- Source: LRCLIB (`LRCLIB_BASE` overrides the URL, for tests). First `/api/get` with artist, cleaned title, album and duration; if that has no synced lyrics, `/api/search` picks the synced result closest in duration.
 - Title cleaning removes bracketed `remaster|version|live|edit|mono|stereo|feat` and ` - … remaster…` suffixes.
 - Cached in memory per `artist|title` (hits only).
 - Rendering: the line index is the last line with `t ≤ position + offset`. Shown: previous, **current** (wipe highlight), next, next+1. The wipe duration is `min(gap to next line, max(1.2 s, 0.075 s × characters))`. A countdown (●●●) appears in the last 3 s before the first line. Empty lines show ♪.
